@@ -1,0 +1,22 @@
+// Chase Fletcher 831004910
+
+CHIP Memory {
+	
+    IN  in[16],       // Data to be written into memory
+        load,      	  // Variable which decides whether to write to memory or not
+        address[16];  // Address for the register which we want access
+    
+    OUT out[16];      // Output from the memory
+
+    PARTS:
+    // Data Memory has three sections: 32K RAM, 8K Screen, 1 Keyboard. Unit is 1 word (16 bits)
+
+    DMux4Way(in=load, sel=address[14..15], a=a, b=b, c=c, d=d);
+    Or(a=a, b=b, out= ab);
+
+    RAM32K(in=in, load=ab, address=address[0..14], out=MEMot);    
+    Screen(in=in, load=c, address=address[0..12], out=SCRot);
+    Keyboard(out=kOut);
+
+    Mux8Way16(a= MEMot, b=MEMot, c= MEMot, d=MEMot, e=SCRot, f=kOut, h=SCRot, sel=address[13..15], out=out);
+}

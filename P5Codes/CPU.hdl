@@ -1,0 +1,182 @@
+CHIP CPU {
+
+    IN  fromM[16],          // M value input  (M = contents of RAM[Address])
+        In[16],    	        // Instruction for execution
+        Reset;              // Signals whether to re-start the current
+                            // program (Reset==1) or continue executing
+                            // the current program (Reset==0).
+
+    OUT toM[16],            // M value output
+        writeM,             // Write to M 
+        addressM[16],       // Address in data memory (of M)
+        PCOut[16];          // address of next instruction
+
+    PARTS:
+
+    // Instruction bits along with the inverted versions
+
+    Not(in=In[15], out=n15);
+    Not(in=In[14], out=n14);
+    Not(in=In[13], out=n13);
+    Not(in=In[12], out=n12);
+
+    // 1. Register control //
+
+    // (!In[15] && !In[14]) || ((in15 & !in12) & ((!in14 & !in13) || (in14 & in13) ) || (!In[15] & In[14])
+
+    And(a=n15,     b=n14,    out=oLeft); //(!In[15] && !In[14])
+    
+    And(a=In[15],  b=n12,    out=thirTw); //(in15 & !in12)
+    
+    And(a=n14,     b=n13, out=oRight); //(!in14 & !in13)
+    And(a=In[14],  b=In[13], out=in1413); //(in14 & in13)
+    Or(a=oRight, b=in1413, out=oRf); //(!in14 & !in13) || (in14 & in13)
+    And(a=thirTw, b=oRf, out= rTo); //((in15 & !in12) & ((!in14 & !in13) || (in14 & in13) )
+
+    And(a=n15, b=In[14], out=oLastLe); //(!In[15] & In[14])
+    Or(a=rTo, b=oLastLe, out=rToL);
+    Or(a=oLeft, b=rToL, out=orange);
+
+    // select register
+    DMux8Way(in=orange, sel=In[9..11], a=r0d, b=r1d, c=r2d, d=r3d, e=r4d, f=r5d, g=r6d, h=r7d);
+
+    // !In15 & !In14 || !In15 & In14
+    And(a=n15, b=In[14], out=aluLog);
+    Or(a=oLeft, b=aluLog, out=AlUorMem);
+    Mux16(b=ALUout, a=fromM, sel=AlUorMem, out=oMux);
+
+    //registers:
+    Register(in=oMux, load=r7d, out=r7a);
+    Register(in=oMux, load=r6d, out=r6a);
+    Register(in=oMux, load=r5d, out=r5a);
+    Register(in=oMux, load=r4d, out=r4a);
+    Register(in=oMux, load=r3d, out=r3a);
+    Register(in=oMux, load=r2d, out=r2a);
+    Register(in=oMux, load=r1d, out=r1a);
+    Register(in=oMux, load=r0d, out=r0a);
+    // Register control //
+    
+    // 2. ALU  //
+
+    // get Xin
+    Mux8Way16(a=r0a, b=r1a, c=r2a, d=r3a, e=r4a, f=r5a, g=r6a, h=r7a, sel=In[6..8], out=Xin);    
+    // get Yin
+    Mux8Way16(a=r0a, b=r1a, c=r2a, d=r3a, e=r4a, f=r5a, g=r6a, h=r7a, sel=In[3..5], out=Ymux);
+    // Yin or Constant:
+    //constant if ((!ln15 and !ln14) and in12)
+    And(a=n15,    b=n14,    out=n15n14);
+    And(a=n15n14, b=In[12], out=ySel  );
+
+    Mux16(b[0..5]=In[0..5], b[6..15]=false, a=Ymux, sel=ySel, out=Yin);
+    ALU(x=Xin, y=Yin, AluOp=In[12..15], AluOut=ALUout, overflow=unusedOverflow);
+    // ALU //
+
+    // 3. Prepare the Memory Address addressM (in case of READ and Write), Memory Data toM (in case of Write or OUT)
+    
+    // addressM //
+    
+    //read/out
+    And(a=In[15], b=n14,    out=LL);
+    And(a=n13,    b=n12,    out=LR);
+    And(a=LL,     b=LR,     out=Lt);
+
+    And(a=In[15], b=In[14], out=RL);
+    And(a=n13,    b=n12,    out=RR);
+    And(a=RL,     b=RR,     out=Rt);
+    
+    //selector bit
+    Or(a=Lt,      b=Rt,     out=readoutSel);
+
+    Mux16(b=Xin, sel=readoutSel, out=addressMB);
+
+    // write
+    And(a=In[13], b=n12, out=wR);
+    And(a=LL, b=wR, out=writeSel);
+
+    // get in[9..11] register output:
+    Mux8Way16(a=r0a, b=r1a, c=r2a, d=r3a, e=r4a, f=r5a, g=r6a, h=r7a, sel=In[9..11], out=writeAd);
+
+    Mux16(b=writeAd, sel=writeSel, out=addressMC);
+
+    // in (1110)
+    //And(a=In[13], b=n12, out=inR);
+    And(a=RL, b=wR, out=inSel);
+
+    // a = 1001110001000001 NON ONO O
+    // a = 1010000000000000 YES
+    Mux16(b[15]=true, b[13]=true, sel=inSel, out=addressMD);
+
+    Or(a=writeSel, b=inSel, out=WoI);
+    Or(a=readoutSel, b=inSel, out=RoI);
+    Mux4Way16(a=addressMB, b=addressMB, c=addressMC, d=addressMD, sel[1]=WoI, sel[0]=RoI, out=addressM);
+//      00 AB read/out 
+//      01 AB read/out 
+//      10 C  write 
+//      11 D  in 
+    
+    // addressM //
+
+    // toM //
+
+    // in15 & !in14 & in13 & !in12 (write) writeSel
+    // in15 & in14 & !in13 & !in12 (out)   Rt
+
+    //Or(a=writeSel, b=Rt, out=doMyes);
+    Mux16(a=false, b=Xin, sel=writeMsel, out=toM);
+
+    // toM //
+
+    // 4. Generate the writeM signal (memory write for RAM or Screen)
+    // writeM is true if it is a Memory Write operation or a Screen OUT operation
+    // writeM //
+    // (in15 & !in14) & in13 & !in12
+    // or in15 & in14 & !in13 & !in12
+    And(a=In[15],  b=n14, out=wML);
+    And(a=In[13],  b=n12, out=wMR);
+    And(a= wML, b=wMR, out=outTwrite);
+
+    And(a=RL, b=LR, out=outTscreen); // 1100
+
+    Or(a=outTwrite, b=outTscreen, out=writeM, out=writeMsel);
+    // writeM //
+    
+
+    
+    // 5. We load the PC with new value if there is a branch
+
+    // Branch can be conditional or unconditional
+    // Unconditional => In[15..12] = 1011
+    // Conditional => In[15..12] = 1001 && REGISTEROF(In[8..6])== 0000000000000000
+    // PC //
+
+    //Mux8Way16(a=r7a, b=r6a, c=r5a, d=r4a, e=r3a, f=r2a, g=r1a, h=r0a, sel=In[9..11], out=PCin);
+
+        //load
+        //1011 OR (1001 AND ( (not in8 & not in7 & not in6)))
+        // 1011:
+        And(a=In[15],b=n14,out=y15n14);
+        And(a=In[13],b=In[12],out=y1413);
+        And(a=y15n14,b=y1413,out=L1011);
+
+        //(not in8 & not in7 & not in6)))
+        isZero(in=Xin, out=n876);
+
+
+       // And(a=isZero, b=isZero, out=n876);
+
+
+        //1001
+        And(a=n13, b=In[12], out=n13y12);
+        And(a=y15n14, b=n13y12, out=l1001);
+
+        //(1001 AND (not in8 & not in7 & not in6)))
+        And(a=l1001, b=n876, out=lRight);
+
+        //1011 OR (1001 AND (not in8 & not in7 & not in6)))
+        Or(a=L1011, b=lRight, out=loadIn);
+
+        //load
+    //Mux(a=true, b=false, sel=loadIn,out=PCinc);
+    PC(in=writeAd, load=loadIn, inc=true, reset=Reset, out=PCOut);
+    // PC // 
+} 
